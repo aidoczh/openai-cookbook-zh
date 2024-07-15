@@ -1,0 +1,273 @@
+# 使用 Supabase Vector 进行语义搜索
+
+本指南旨在演示如何将 OpenAI 嵌入存储在 [Supabase Vector](https://supabase.com/docs/guides/ai)（Postgres + pgvector）中，以实现语义搜索。
+
+[Supabase](https://supabase.com/docs) 是一个开源的 Firebase 替代品，建立在 [Postgres](https://en.wikipedia.org/wiki/PostgreSQL) 之上，这是一个生产级的 SQL 数据库。由于 Supabase Vector 基于 [pgvector](https://github.com/pgvector/pgvector)，您可以将嵌入存储在与应用程序其他数据相同的数据库中。结合 pgvector 的索引算法，向量搜索在[大规模时仍然保持快速](https://supabase.com/blog/increase-performance-pgvector-hnsw)。
+
+Supabase 添加了一系列服务和工具，以尽可能快速地进行应用程序开发（例如[自动生成的 REST API](https://postgrest.org/)）。我们将使用这些服务在 Postgres 中存储和查询嵌入。
+
+本指南涵盖：
+
+1. [设置数据库](#setup-database)
+2. [创建一个可以存储向量数据的 SQL 表](#create-a-vector-table)
+3. [使用 OpenAI 的 JavaScript 客户端生成 OpenAI 嵌入](#generate-openai-embeddings)
+4. [使用 Supabase JavaScript 客户端将嵌入存储在 SQL 表中](#store-embeddings-in-database)
+5. [使用 Postgres 函数和 Supabase JavaScript 客户端对嵌入进行语义搜索](#semantic-search)
+
+## 设置数据库
+
+首先前往 https://database.new 配置您的 Supabase 数据库。这将在 Supabase 云平台上创建一个 Postgres 数据库。或者，如果您更喜欢使用 Docker 在本地运行数据库，可以按照[本地开发](https://supabase.com/docs/guides/cli/getting-started)选项进行操作。
+
+在工作室中，跳转到 [SQL 编辑器](https://supabase.com/dashboard/project/_/sql/new) 并执行以下 SQL 以启用 pgvector：
+
+```sql
+-- 启用 pgvector 扩展
+create extension if not exists vector;
+```
+
+> 在生产应用程序中，最佳实践是使用[数据库迁移](https://supabase.com/docs/guides/cli/local-development#database-migrations)，以便所有 SQL 操作都在源代码控制中进行管理。为了简化本指南，我们将直接在 SQL 编辑器中执行查询。如果您正在构建生产应用程序，可以随意将这些操作移至数据库迁移中。
+
+## 创建向量表
+
+接下来，我们将创建一个表来存储文档和嵌入。在 SQL 编辑器中运行：
+
+```sql
+create table documents (
+  id bigint primary key generated always as identity,
+  content text not null,
+  embedding vector (1536) not null
+);
+```
+
+由于 Supabase 建立在 Postgres 之上，我们在这里只是使用常规的 SQL。您可以根据需要修改此表以更好地适应您的应用程序。如果您有现有的数据库表，只需在适当的表中添加一个新的 `vector` 列即可。
+
+需要理解的重要部分是 `vector` 数据类型，这是一种新的数据类型，在我们之前启用 pgvector 扩展时变得可用。向量的大小（此处为 1536）表示嵌入的维度数。由于我们在此示例中使用 OpenAI 的 `text-embedding-3-small` 模型，因此我们将向量大小设置为 1536。
+
+让我们继续在此表上创建一个向量索引，以便随着表的增长，未来的查询保持高性能：
+
+```sql
+create index on documents using hnsw (embedding vector_ip_ops);
+```
+
+此索引使用 [HNSW](https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes) 算法对存储在 `embedding` 列中的向量进行索引，特别是在使用内积运算符（`<#>`）时。我们将在实现匹配函数时进一步解释此运算符。
+
+我们还应遵循安全最佳实践，启用表级别的行级安全：
+
+```sql
+alter table documents enable row level security;
+```
+
+这将防止通过自动生成的 REST API 对本表进行未经授权的访问（稍后会详细介绍）。
+
+## 生成 OpenAI 嵌入
+
+本指南使用 JavaScript 生成嵌入，但您可以轻松修改它以使用 OpenAI 支持的任何[语言](https://platform.openai.com/docs/libraries)。
+
+如果您使用 JavaScript，可以随意使用您偏好的任何服务器端 JavaScript 运行时（Node.js、Deno、Supabase Edge Functions）。
+
+如果您使用 Node.js，首先安装 `openai` 作为依赖项：
+
+```shell
+npm install openai
+```
+
+然后导入它：
+
+```js
+import OpenAI from "openai";
+```
+
+如果您使用 Deno 或 Supabase Edge Functions，可以直接从 URL 导入 `openai`：
+
+```js
+import OpenAI from "https://esm.sh/openai@4";
+```
+
+> 在此示例中，我们从 https://esm.sh 导入，这是一个 CDN，会自动为您获取相应的 NPM 模块并通过 HTTP 提供服务。
+接下来，我们将使用 [`text-embedding-3-small`](https://platform.openai.com/docs/guides/embeddings/embedding-models) 生成一个 OpenAI 嵌入：
+
+```js
+const openai = new OpenAI();
+
+const input = "The cat chases the mouse";
+
+const result = await openai.embeddings.create({
+  input,
+  model: "text-embedding-3-small",
+});
+
+const [{ embedding }] = result.data;
+```
+
+请记住，您需要一个 [OpenAI API 密钥](https://platform.openai.com/api-keys) 来与 OpenAI API 进行交互。您可以将此密钥作为名为 `OPENAI_API_KEY` 的环境变量传递，或者在实例化 OpenAI 客户端时手动设置：
+
+```js
+const openai = new OpenAI({
+  apiKey: "<openai-api-key>",
+});
+```
+
+**记住：** 切勿在代码中硬编码 API 密钥。最佳实践是将其存储在 `.env` 文件中，并使用 [`dotenv`](https://github.com/motdotla/dotenv) 等库加载，或者从外部密钥管理系统加载。
+
+## 在数据库中存储嵌入
+
+Supabase 自带一个 [自动生成的 REST API](https://postgrest.org/)，它会为每个表动态构建 REST 端点。这意味着您无需直接建立与数据库的 Postgres 连接，而是可以通过 REST API 简单地与之交互。这在运行短生命周期进程的无服务器环境中特别有用，因为每次重新建立数据库连接可能会很昂贵。
+
+Supabase 提供了多个 [客户端库](https://supabase.com/docs#client-libraries) 来简化与 REST API 的交互。在本指南中，我们将使用 [JavaScript 客户端库](https://supabase.com/docs/reference/javascript)，但您可以根据自己的偏好进行调整。
+
+如果您使用的是 Node.js，请将 `@supabase/supabase-js` 安装为依赖项：
+
+```shell
+npm install @supabase/supabase-js
+```
+
+然后导入它：
+
+```js
+import { createClient } from "@supabase/supabase-js";
+```
+
+如果您使用的是 Deno 或 Supabase Edge Functions，可以直接从 URL 导入 `@supabase/supabase-js`：
+
+```js
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+```
+
+接下来，我们将实例化 Supabase 客户端并进行配置，使其指向您的 Supabase 项目。在本指南中，我们将 Supabase URL 和密钥的引用存储在 `.env` 文件中，但您可以根据应用程序的配置方式进行修改。
+
+如果您使用的是 Node.js 或 Deno，请将 Supabase URL 和服务角色密钥添加到 `.env` 文件中。如果您使用的是云平台，可以从 Supabase 仪表板的 [设置页面](https://supabase.com/dashboard/project/_/settings/api) 找到这些信息。如果您在本地运行 Supabase，可以通过在终端中运行 `npx supabase status` 找到这些信息。
+
+_.env_
+
+```
+SUPABASE_URL=<supabase-url>
+SUPABASE_SERVICE_ROLE_KEY=<supabase-service-role-key>
+```
+
+如果您使用的是 Supabase Edge Functions，这些环境变量会自动注入到您的函数中，因此您可以跳过上述步骤。
+
+接下来，我们将这些环境变量引入我们的应用程序。
+
+在 Node.js 中，安装 `dotenv` 依赖项：
+
+```shell
+npm install dotenv
+```
+
+并从 `process.env` 中检索环境变量：
+
+```js
+import { config } from "dotenv";
+
+// 加载 .env 文件
+config();
+
+const supabaseUrl = process.env["SUPABASE_URL"];
+const supabaseServiceRoleKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+```
+
+在 Deno 中，使用 `dotenv` 标准库加载 `.env` 文件：
+
+```js
+import { load } from "https://deno.land/std@0.208.0/dotenv/mod.ts";
+
+// 加载 .env 文件
+const env = await load();
+
+const supabaseUrl = env["SUPABASE_URL"];
+const supabaseServiceRoleKey = env["SUPABASE_SERVICE_ROLE_KEY"];
+```
+
+在 Supabase Edge Functions 中，直接加载注入的环境变量：
+
+```js
+const supabaseUrl = Deno.env.get("SUPABASE_URL");
+const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+```
+
+接下来，让我们实例化 `supabase` 客户端：
+
+```js
+const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  auth: { persistSession: false },
+});
+```
+
+从这里，我们使用 `supabase` 客户端将我们的文本和嵌入（之前生成的）插入数据库：
+
+```js
+const { error } = await supabase.from("documents").insert({
+  content: input,
+  embedding,
+});
+```
+
+> 在生产环境中，最佳实践是检查响应 `error` 以查看是否有任何插入数据的问题，并相应地处理。
+
+## 语义搜索
+
+最后，让我们对数据库中的嵌入进行语义搜索。此时，我们假设 `documents` 表已经填充了多个记录，我们可以进行搜索。
+
+让我们在 Postgres 中创建一个执行语义搜索查询的匹配函数。在 [SQL 编辑器](https://supabase.com/dashboard/project/_/sql/new) 中执行以下操作：
+```sql
+创建函数 match_documents (
+  query_embedding 向量 (1536),
+  match_threshold 浮点数,
+)
+返回集合 documents
+语言 plpgsql
+as $$
+开始
+  返回查询
+  选择 *
+  从 documents
+  其中 documents.embedding <#> query_embedding < -match_threshold
+  按 documents.embedding <#> query_embedding 排序;
+结束;
+$$;
+```
+这个函数接受一个 `query_embedding`，它代表了从搜索查询文本生成的嵌入（稍后会详细介绍）。它还接受一个 `match_threshold`，这个阈值指定了文档嵌入与 `query_embedding` 的相似度必须达到多少才能被视为匹配。
+
+在函数内部，我们实现了查询操作，它主要做两件事：
+
+- 过滤文档，只包括那些嵌入与上述 `match_threshold` 匹配的文档。由于 `<#>` 操作符执行的是负内积（与正内积相反），我们在比较之前先对相似度阈值取反。这意味着 `match_threshold` 为 1 时最相似，-1 时最不相似。
+- 按负内积（`<#>`）升序排列文档。这使我们能够先检索最匹配的文档。
+
+> 由于 OpenAI 的嵌入是标准化的，我们选择使用内积（`<#>`），因为它比其他操作符（如余弦距离 `<=>`）稍微高效一些。但需要注意的是，这仅在嵌入标准化的情况下有效——如果不是，则应使用余弦距离。
+
+现在，我们可以使用 `supabase.rpc()` 方法从应用程序中调用这个函数：
+
+```js
+const query = "What does the cat chase?";
+
+// 首先为查询本身创建一个嵌入
+const result = await openai.embeddings.create({
+  input: query,
+  model: "text-embedding-3-small",
+});
+
+const [{ embedding }] = result.data;
+
+// 然后使用这个嵌入来搜索匹配项
+const { data: documents, error: matchError } = await supabase
+  .rpc("match_documents", {
+    query_embedding: embedding,
+    match_threshold: 0.8,
+  })
+  .select("content")
+  .limit(5);
+```
+
+在这个例子中，我们将匹配阈值设置为 0.8。根据你的数据调整这个阈值以达到最佳效果。
+
+注意，由于 `match_documents` 返回一组 `documents`，我们可以像对待常规表查询一样处理这个 `rpc()`。具体来说，这意味着我们可以在这个查询上链接额外的命令，比如 `select()` 和 `limit()`。这里我们只从 `documents` 表中选择我们关心的列（`content`），并且限制返回的文档数量（本例中最多 5 个）。
+
+至此，你已经获得了一个基于语义关系匹配查询的文档列表，按最相似的顺序排列。
+
+## 下一步
+
+你可以将这个例子作为其他语义搜索技术的基础，比如检索增强生成（RAG）。
+
+有关 OpenAI 嵌入的更多信息，请阅读 [嵌入](https://platform.openai.com/docs/guides/embeddings) 文档。
+
+有关 Supabase Vector 的更多信息，请阅读 [AI & Vector](https://supabase.com/docs/guides/ai) 文档。

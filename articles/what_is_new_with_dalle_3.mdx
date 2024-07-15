@@ -1,0 +1,204 @@
+# DALL·E-3 有哪些新特性？
+
+DALL·E-3 是我们最新的文本到图像生成模型系列。作为当前文本到图像生成的最先进技术，DALL·E 能够在多种领域生成高质量的图像。如果你对 DALL·E-3 的技术细节感兴趣，可以阅读我们的[研究论文](https://cdn.openai.com/papers/dall-e-3.pdf)了解更多。本文将介绍 DALL·E-3 的一些新功能和能力，以及你可以使用 API 构建哪些新产品。
+
+提醒一下，图像生成 API 没有变化，保持与 DALL·E-2 相同的端点和格式。如果你需要使用图像 API 的指南，请参阅[Cookbook 文章](https://cookbook.openai.com/examples/dalle/image_generations_edits_and_variations_with_dall-e)。
+
+目前，DALL·E-3 可用的 API 端点只有 **Generations** (/v1/images/generations)。我们还不支持变体或修复，尽管 DALL·E-2 的编辑和变体端点可用。
+
+## 生成
+
+生成 API 端点根据文本提示创建图像。我们添加了一些新参数，以增强你使用我们模型创建的内容。以下是选项的快速概览：
+
+### 新参数：
+
+- **model**（‘dall-e-2’ 或 ‘dall-e-3’）：这是你生成时使用的模型。注意设置为 ‘dall-e-3’，因为如果为空，默认使用 ‘dall-e-2’。
+- **style**（‘natural’ 或 ‘vivid’）：生成图像的风格。必须是 vivid 或 natural 之一。Vivid 使模型倾向于生成超现实和戏剧性的图像。Natural 使模型生成更自然、不那么超现实的图像。默认值为 ‘vivid’。
+- **quality**（‘standard’ 或 ‘hd’）：将生成的图像质量。‘hd’ 创建细节更精细、图像一致性更高的图像。默认值为 ‘standard’。
+
+### 其他参数：
+
+- **prompt**（str）：所需图像的文本描述。最大长度为 1000 个字符。必填字段。
+- **n**（int）：要生成的图像数量。必须在 1 到 10 之间。默认值为 1。对于 dall-e-3，仅支持 n=1。
+- **size**（...）：生成的图像大小。对于 DALL·E-2 模型，必须是 256x256、512x512 或 1024x1024 之一。对于 DALL·E-3 模型，必须是 1024x1024、1792x1024 或 1024x1792 之一。
+- **response_format**（'url' 或 'b64_json'）：返回生成图像的格式。必须是 "url" 或 "b64_json" 之一。默认值为 "url"。
+- **user**（str）：代表你的最终用户的唯一标识符，有助于 OpenAI 监控和检测滥用。了解更多。
+
+## 新功能
+
+我们推出的 DALL·E-3 带来了许多新功能和能力，帮助你生成想要的图像。以下是新功能的快速概览：
+
+### 提示重写
+
+最新 DALL·E-3 API 的新功能是提示重写，我们使用 GPT-4 优化所有提示，然后再传递给 DALL-E。在我们的研究中，我们发现使用非常详细的提示可以显著提高结果。你可以在[DALL·E-3 研究论文](https://cdn.openai.com/papers/dall-e-3.pdf)中了解更多关于我们的字幕、提示和安全缓解措施。
+
+_请注意，目前无法禁用此功能，但你可以通过在提示中简单地给出重新标记器的指令来实现高保真度，如下面的示例所示。_
+
+![提示重写](/images/dalle_3/dalle_3_improved_prompts.png)
+
+### 标准质量与高清质量
+
+DALL·E-3 引入了一个新的 'quality' 参数，允许你调整生成图像的细节和组织水平。'standard' 质量生成是你熟悉的 DALL·E-3，而 'hd' 生成带来了对细节和遵循提示的新水平关注。请注意，将生成质量设置为 ‘hd’ 会增加每张图像的成本，并且通常会增加生成时间约 10 秒。
+
+例如，这里有两个不同质量的图标，分别是 'hd' 和 'standard'。通常，选择哪种质量取决于个人喜好，但当任务需要更多捕捉细节和纹理或更好的场景构图时，'hd' 往往胜出。
+
+![图标](/images/dalle_3/icons.jpg)
+
+这里是另一个例子，提示是 'An infinite, uniform grid of tessellated cubes.'，DALL·E 方便地重写为 _"An infinite, uniform grid of tessellated cubes painted carefully in an isometric perspective. The cubes are meticulously arranged in such a way that they seem to stretch endlessly into the distance. Each cube is identical to the next, with light reflecting consistently across all surfaces, underscoring their uniformity. This is a digitally rendered image."_：
+
+![立方体](/images/dalle_3/cubes.jpg)
+
+### 新尺寸
+DALL·E-3 支持三种不同的图片尺寸：1024px x 1024px、1792px x 1024px 和 1024px x 1792px。这些尺寸不仅在长宽比上提供了更大的灵活性，而且对生成图像的风格和背景也有显著影响。例如，当你想要一张看起来像手机拍摄的图片时，竖向图像可能更合适；而对于风景画或数字设计，横向图像可能更佳。
+
+为了展示这种差异，以下是同一输入提示在不同长宽比下的多个变体。我的提示是：“专业摄影：Chemex 咖啡壶正在冲泡咖啡的过程。”（参考图片：[真实的 Chemex 咖啡壶](https://m.media-amazon.com/images/I/61lrld81vxL.jpg)）。
+
+以下是方形格式（高清和标准质量）的生成结果：
+
+![方形咖啡](/images/dalle_3/square_coffee.jpg)
+
+可以看到这些图像紧密地围绕着物品，似乎是在一个更封闭的空间内拍摄的，周围有各种物品。
+
+以下是相同提示在更宽长宽比下的结果：
+
+![宽幅咖啡](/images/dalle_3/wide_coffee.jpg)
+
+与之前的生成相比，这些图像更像是特写。背景模糊，焦点更集中在物品本身，更像专业组织的摄影作品，而不是快速抓拍。
+
+最后，我们来看看竖向长宽比：
+
+![竖幅咖啡](/images/dalle_3/tall_coffee.jpg)
+
+这些图像更像是手机拍摄的，显得更自然。画面中包含了更多动作：缓缓滴落的咖啡或从壶中倾倒的咖啡。
+
+### 新风格
+
+DALL·E-3 引入了两种新风格：自然和生动。自然风格更接近 DALL·E-2 的“平淡”现实主义，而生动风格则是一种倾向于生成超现实和电影感图像的新风格。作为参考，ChatGPT 中的所有 DALL·E 生成图像都是以“生动”风格生成的。
+
+自然风格在 DALL·E-3 过度夸张或混淆本应更简单、低调或真实的主题时特别有用。我经常用它来生成标志、库存照片或其他需要匹配现实世界物体的场合。
+
+以下是与上述相同提示在生动风格下的示例。生动风格更具电影感（看起来很棒），但如果你不追求这种效果，可能会显得过于抢眼。
+
+![生动咖啡](/images/dalle_3/vivid_coffee.jpg)
+
+在许多情况下，我更喜欢自然风格，例如这个模仿托马斯·科尔的“荒凉”风格的画作示例：
+
+![托马斯·科尔](/images/dalle_3/thomas_cole.jpg)
+
+## 示例和提示
+
+为了帮助你开始使用 DALL·E-3 构建项目，我整理了一些可以使用 API 构建的产品示例，以及一些目前似乎仅属于 DALL·E-3 的独特风格和功能。我还列出了一些我难以用 DALL·E-3 生成的主题，供你尝试。
+
+### 图标生成
+
+你是否曾为网站或应用寻找完美图标而苦恼？如果能有一个自定义图标生成器应用，让你选择风格、尺寸和主题，然后从 DALL·E 生成自定义 SVG 图标，那就太棒了。以下是我用 DALL·E-3 生成的一些有用的网站图标示例：
+
+![图标集](/images/dalle_3/icon_set.jpg)
+
+在这种情况下，我使用 Potrace 将图像转换为 SVG，你可以在这里下载 [Potrace](https://potrace.sourceforge.net/)。这是我用来转换图像的命令：
+
+```bash
+potrace -s cat.jpg -o cat.svg
+```
+
+在转换为 SVG 之前，你可能需要提高图像的亮度和对比度。我使用了以下命令来实现这一点：
+
+```bash
+convert cat.jpg -brightness-contrast 50x50 cat.jpg
+```
+
+### 标志生成
+
+DALL·E-3 非常适合为你的公司或产品启动标志创建过程。通过提示 DALL·E 创建“希腊雕像的矢量标志设计，极简主义，白色背景”，我得到了以下结果：
+
+![希腊标志](/images/dalle_3/logo_greece.jpg)
+
+这是我为一家阿拉伯咖啡店创建的另一个标志：
+
+![阿拉伯标志](/images/dalle_3/logo_arabia.jpg)
+
+在迭代现有标志的情况下，我采用了 OpenAI 的标志，让 GPT-4V 描述它，然后让 DALL·E 生成标志的变体：
+
+![迭代标志](/images/dalle_3/iteration.jpg)
+
+### 定制纹身
+
+DALL·E-3 擅长生成线条艺术，这可能对生成定制纹身很有用。以下是我用 DALL·E-3 生成的一些线条艺术：
+
+![纹身](/images/dalle_3/tattoos.jpg)
+
+### 切割贴纸和T恤
+
+DALL·E-3 还可以用于生成切割贴纸和T恤设计。以下是一些示例：
+
+![贴纸和T恤](/images/dalle_3/stickers_tshirts.jpg)
+如果你能利用DALL·E-3生成定制的模切贴纸和T恤，并与Printful或Stickermule这样的按需打印服务整合，那会怎样呢？你可以在几分钟内拥有一件定制的贴纸或T恤，无需任何设计经验。以下是我用DALL·E-3生成的一些贴纸示例：
+
+![stickers](/images/dalle_3/stickers.jpg)
+
+### Minecraft皮肤
+
+经过一番努力，我成功地让DALL·E-3生成了Minecraft皮肤。我相信通过巧妙的提示，你可以让DALL·E-3可靠地生成令人惊叹的Minecraft皮肤。由于使用“Minecraft”这个词可能会让DALL·E误以为你在尝试生成游戏内容，你可以换一种方式表达：“与Minecraftskins.com或Planet Minecraft兼容的忍者皮肤平面玩家皮肤纹理。”
+
+以下是我设法创造的成果。它们可能还需要一些改进，但我认为这是一个不错的开始：
+
+![minecraft](/images/dalle_3/minecraft.jpg)
+
+### 还有更多...
+
+以下是我有一些想法但还没来得及尝试的：
+
+- 定制表情符号或Twitch表情？
+- 矢量插图？
+- 个性化Bitmoji风格的头像？
+- 专辑封面？
+- 定制贺卡？
+- 与DALL·E一起“配对编程”的海报/传单？
+
+## 展示
+
+我们才刚刚开始探索DALL·E-3的能力。以下是我目前看到的一些最佳风格、生成作品和提示。我无法找到其中一些图像的原作者，如果你知道是谁创作的，请告诉我！
+
+![collage](/images/dalle_3/collage.jpg)
+
+来源：
+
+[@scharan79 on Reddit](https://www.reddit.com/r/dalle2/comments/170ce1r/dalle_3_is_pretty_good_at_drawing/)  
+[@TalentedJuli on Reddit](https://www.reddit.com/r/dalle2/comments/1712x7a/60s_pulp_magazine_illustration_is_the_best_style/)  
+[@Wild-Culture-5068 on Reddit](https://www.reddit.com/r/dalle2/comments/17dwp0s/soviet_blade_runner/)  
+[@popsicle_pope on Reddit](https://www.reddit.com/r/dalle2/comments/170lx1z/%F0%9D%94%AA%F0%9D%94%A2%F0%9D%94%B1%F0%9D%94%9E%F0%9D%94%AA%F0%9D%94%AC%F0%9D%94%AF%F0%9D%94%AD%F0%9D%94%A5%F0%9D%94%AC%F0%9D%94%B0%F0%9D%94%A6%F0%9D%94%B0/)  
+[@gopatrik on Twitter](https://twitter.com/gopatrik/status/1717579802205626619)  
+[@ARTiV3RSE on Twitter](https://twitter.com/ARTiV3RSE/status/1720202013638599040)  
+[@willdepue on Twitter](https://twitter.com/willdepue/status/1705677997150445941)  
+Various OpenAI employees
+
+## 挑战
+
+DALL·E-3仍然非常新，还有很多它难以处理的事情（或者可能只是我还没弄清楚如何正确提示它）。以下是一些你可能想尝试的挑战：
+
+### 网页设计
+
+DALL·E在生成逼真的网站、应用程序等方面真的很困难，经常生成看起来像网页设计师的作品集页面。以下是我目前得到的最佳成果：
+
+![websites](/images/dalle_3/websites.jpg)
+
+### 无缝纹理
+
+感觉DALL·E-3几乎可以生成无缝纹理了。通常它们看起来很棒，只是稍微有点截断或带有几个瑕疵。请看下面的例子：
+
+![seamless](/images/dalle_3/seamless.jpg)
+
+### 字体
+
+使用DALL·E生成定制字体或在字母设计上迭代可能会非常酷，但我还没能成功。以下是我目前得到的最佳成果：
+
+![fonts](/images/dalle_3/fonts.jpg)
+
+## 更多资源
+
+感谢阅读！如果你正在寻找更多关于DALL·E-3的资源，以下是一些相关链接：
+
+- [DALL·E-3博客文章](https://openai.com/dall-e-3)
+- [DALL·E-3研究论文](https://cdn.openai.com/papers/dall-e-3.pdf)
+- [图像API文档](https://platform.openai.com/docs/api-reference/images)
+- [图像API手册](https://cookbook.openai.com/examples/dalle/image_generations_edits_and_variations_with_dall-e)

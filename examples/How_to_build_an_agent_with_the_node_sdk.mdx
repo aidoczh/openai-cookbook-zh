@@ -1,0 +1,435 @@
+# 如何使用 Node.js SDK 构建一个代理
+
+OpenAI 功能使您的应用程序能够根据用户输入采取行动。这意味着它可以代表用户执行诸如网络搜索、发送电子邮件或预订票务等操作，使其比普通聊天机器人更强大。
+
+在本教程中，您将构建一个使用 OpenAI 功能以及最新版本的 Node.js SDK 的应用程序。该应用程序在浏览器中运行，因此您只需要一个代码编辑器，例如 VS Code Live Server，就可以在本地跟随操作。或者，您可以直接通过 [Scrimba 上的这个代码游乐场](https://scrimba.com/scrim/c6r3LkU9) 在浏览器中编写代码。
+
+## 您将构建的内容
+
+我们的应用程序是一个简单的代理，帮助您在您所在地区找到活动。它有两个功能，`getLocation()` 和 `getCurrentWeather()`，这意味着它可以确定您的位置并了解当前的天气情况。
+
+此时，重要的是要理解 OpenAI 不会为您执行任何代码。它只是告诉您的应用程序在特定场景下应该使用哪些功能，然后由您的应用程序来调用它们。
+
+一旦我们的代理知道了您的位置和天气，它将利用 GPT 的内部知识为您推荐合适的当地活动。
+
+## 导入 SDK 并使用 OpenAI 进行身份验证
+
+我们从在 JavaScript 文件顶部导入 OpenAI SDK 开始，并使用我们存储为环境变量的 API 密钥进行身份验证。
+
+```js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true,
+});
+```
+
+由于我们在 Scrimba 的浏览器环境中运行代码，我们还需要设置 `dangerouslyAllowBrowser: true` 以确认我们了解客户端 API 请求的风险。请注意，在生产应用程序中，您应该将这些请求转移到 Node 服务器上。
+
+## 创建我们的两个功能
+
+接下来，我们将创建这两个功能。第一个功能 - `getLocation` - 使用 [IP API](https://ipapi.co/) 获取用户的位置。
+
+```js
+async function getLocation() {
+  const response = await fetch("https://ipapi.co/json/");
+  const locationData = await response.json();
+  return locationData;
+}
+```
+
+IP API 返回有关您位置的大量数据，包括您的纬度和经度，我们将这些数据作为第二个功能 `getCurrentWeather` 的参数。它使用 [Open Meteo API](https://open-meteo.com/) 获取当前天气数据，如下所示：
+
+```js
+async function getCurrentWeather(latitude, longitude) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=apparent_temperature`;
+  const response = await fetch(url);
+  const weatherData = await response.json();
+  return weatherData;
+}
+```
+
+## 为 OpenAI 描述我们的功能
+
+为了让 OpenAI 理解这些功能的目的，我们需要使用特定模式来描述它们。我们将创建一个名为 `tools` 的数组，其中包含每个功能对应的一个对象。每个对象有两个键：`type` 和 `function`，而 `function` 键有三个子键：`name`、`description` 和 `parameters`。
+
+```js
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "getCurrentWeather",
+      description: "获取给定位置的当前天气",
+      parameters: {
+        type: "object",
+        properties: {
+          latitude: {
+            type: "string",
+          },
+          longitude: {
+            type: "string",
+          },
+        },
+        required: ["longitude", "latitude"],
+      },
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getLocation",
+      description: "根据用户的 IP 地址获取用户的位置",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    }
+  },
+];
+```
+
+## 设置消息数组
+
+我们还需要定义一个 `messages` 数组。这将跟踪我们的应用程序和 OpenAI 之间的所有消息往来。
+
+数组中的第一个对象应始终将 `role` 属性设置为 `"system"`，这告诉 OpenAI 这是我们希望它如何表现。
+
+```js
+const messages = [
+  {
+    role: "system",
+    content:
+      "您是一个有帮助的助手。仅使用您被提供的功能。",
+  },
+];
+```
+
+## 创建代理功能
+
+我们现在准备好构建应用程序的逻辑，它位于 `agent` 函数中。该函数是异步的，并接受一个参数：`userInput`。
+
+我们首先将 `userInput` 推送到消息数组中。这次，我们将 `role` 设置为 `"user"`，以便 OpenAI 知道这是用户的输入。
+
+```js
+async function agent(userInput) {
+  messages.push({
+    role: "user",
+    content: userInput,
+  });
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: messages,
+    tools: tools,
+  });
+  console.log(response);
+}
+```
+
+接下来，我们将通过 Chat completions 端点向 OpenAI 发送请求，如下所示：
+`chat.completions.create()` 方法在 Node SDK 中。这个方法接受一个配置对象作为参数。在其中，我们将指定三个属性：
+
+- `model` - 决定我们想要使用哪个 AI 模型（在我们的例子中，是 GPT-4）。
+- `messages` - 用户和 AI 之间到目前为止的整个消息历史。
+- `tools` - 模型可能调用的工具列表。目前，只有函数作为工具被支持，我们将使用之前创建的 `tools` 数组。
+
+## 使用简单输入运行我们的应用
+
+让我们尝试用一个需要函数调用来给出合适回复的输入来运行 `agent`。
+
+```js
+agent("Where am I located right now?");
+```
+
+当我们运行上述代码时，我们会看到 OpenAI 的响应被记录到控制台中，如下所示：
+
+```js
+{
+    id: "chatcmpl-84ojoEJtyGnR6jRHK2Dl4zTtwsa7O",
+    object: "chat.completion",
+    created: 1696159040,
+    model: "gpt-4-0613",
+    choices: [{
+        index: 0,
+        message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              id: "call_CBwbo9qoXUn1kTR5pPuv6vR1",
+              type: "function",
+              function: {
+                name: "getLocation",
+                arguments: "{}"
+              }
+            ]
+        },
+        logprobs: null,
+        finish_reason: "tool_calls" // OpenAI 希望我们调用一个函数
+    }],
+    usage: {
+        prompt_tokens: 134,
+        completion_tokens: 6,
+        total_tokens: 140
+    }
+     system_fingerprint: null
+}
+```
+
+这个响应告诉我们应该调用我们的一个函数，因为它包含以下关键字：`finish_reason: "tool_calls"`。
+
+函数的名称可以在 `response.choices[0].message.tool_calls[0].function.name` 键中找到，该键被设置为 `"getLocation"`。
+
+## 将 OpenAI 响应转换为函数调用
+
+现在我们有了函数名称作为一个字符串，我们需要将其转换为函数调用。为了帮助我们完成这一点，我们将把我们的两个函数收集在一个名为 `availableTools` 的对象中：
+
+```js
+const availableTools = {
+  getCurrentWeather,
+  getLocation,
+};
+```
+
+这很方便，因为我们将能够通过括号表示法和从 OpenAI 返回的字符串访问 `getLocation` 函数，如下所示：`availableTools["getLocation"]`。
+
+```js
+const { finish_reason, message } = response.choices[0];
+
+if (finish_reason === "tool_calls" && message.tool_calls) {
+  const functionName = message.tool_calls[0].function.name;
+  const functionToCall = availableTools[functionName];
+  const functionArgs = JSON.parse(message.tool_calls[0].function.arguments);
+  const functionArgsArr = Object.values(functionArgs);
+  const functionResponse = await functionToCall.apply(null, functionArgsArr);
+  console.log(functionResponse);
+}
+```
+
+我们还抓住了 OpenAI 希望我们传递给函数的任何参数：`message.tool_calls[0].function.arguments`。然而，对于这第一个函数调用，我们不需要任何参数。
+
+如果我们再次使用相同的输入（`"Where am I located right now?"`）运行代码，我们会看到 `functionResponse` 是一个包含用户当前位置信息的对象。在我的例子中，那是挪威的奥斯陆。
+
+```js
+{ip: "193.212.60.170", network: "193.212.60.0/23", version: "IPv4", city: "Oslo", region: "Oslo County", region_code: "03", country: "NO", country_name: "Norway", country_code: "NO", country_code_iso3: "NOR", country_capital: "Oslo", country_tld: ".no", continent_code: "EU", in_eu: false, postal: "0026", latitude: 59.955, longitude: 10.859, timezone: "Europe/Oslo", utc_offset: "+0200", country_calling_code: "+47", currency: "NOK", currency_name: "Krone", languages: "no,nb,nn,se,fi", country_area: 324220, country_population: 5314336, asn: "AS2119", org: "Telenor Norge AS"}
+```
+
+我们将这些数据添加到 `messages` 数组的一个新项中，同时指定我们调用的函数名称。
+
+```js
+messages.push({
+  role: "function",
+  name: functionName,
+  content: `The result of the last function was this: ${JSON.stringify(
+    functionResponse
+  )}
+  `,
+});
+```
+
+注意 `role` 被设置为 `"function"`。这告诉 OpenAI `content` 参数包含函数调用的结果，而不是用户的输入。
+
+在这一点上，我们需要用这个更新的 `messages` 数组向 OpenAI 发送一个新的请求。然而，我们不想硬编码一个新的函数调用，因为我们的代理可能需要在自身和 GPT 之间来回多次，直到它为用户找到最终答案。
+
+这可以通过几种不同的方式解决，例如递归、while 循环或 for 循环。为了简单起见，我们将使用一个传统的 for 循环。
+
+## 创建循环
+
+在 `agent` 函数的顶部，我们将创建一个循环，允许我们运行整个过程最多五次。
+
+如果我们从 GPT 得到 `finish_reason: "tool_calls"`，我们将把函数调用的结果推送到 `messages` 数组中，并跳转到
+在循环的下一次迭代中，会触发新的请求。
+
+如果我们收到 `finish_reason: "stop"` 的返回，那么 GPT 已经找到了合适的答案，因此我们将返回函数并取消循环。
+
+```js
+for (let i = 0; i < 5; i++) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: messages,
+    tools: tools,
+  });
+  const { finish_reason, message } = response.choices[0];
+
+  if (finish_reason === "tool_calls" && message.tool_calls) {
+    const functionName = message.tool_calls[0].function.name;
+    const functionToCall = availableTools[functionName];
+    const functionArgs = JSON.parse(message.tool_calls[0].function.arguments);
+    const functionArgsArr = Object.values(functionArgs);
+    const functionResponse = await functionToCall.apply(null, functionArgsArr);
+
+    messages.push({
+      role: "function",
+      name: functionName,
+      content: `
+          The result of the last function was this: ${JSON.stringify(
+            functionResponse
+          )}
+          `,
+    });
+  } else if (finish_reason === "stop") {
+    messages.push(message);
+    return message.content;
+  }
+}
+return "The maximum number of iterations has been met without a suitable answer. Please try again with a more specific input.";
+```
+
+如果在五次迭代内没有看到 `finish_reason: "stop"`，我们将返回一条消息，表示我们找不到合适的答案。
+
+## 运行最终应用
+
+此时，我们已经准备好尝试我们的应用了！我将要求代理根据我的位置和当前天气推荐一些活动。
+
+```js
+const response = await agent(
+  "Please suggest some activities based on my location and the current weather."
+);
+console.log(response);
+```
+
+以下是我们在控制台中看到的内容（格式化以便于阅读）：
+
+```js
+Based on your current location in Oslo, Norway and the weather (15°C and snowy),
+here are some activity suggestions:
+
+1. A visit to the Oslo Winter Park for skiing or snowboarding.
+2. Enjoy a cosy day at a local café or restaurant.
+3. Visit one of Oslo's many museums. The Fram Museum or Viking Ship Museum offer interesting insights into Norway’s seafaring history.
+4. Take a stroll in the snowy streets and enjoy the beautiful winter landscape.
+5. Enjoy a nice book by the fireplace in a local library.
+6. Take a fjord sightseeing cruise to enjoy the snowy landscapes.
+
+Always remember to bundle up and stay warm. Enjoy your day!
+```
+
+如果我们深入了解内部，并在循环的每次迭代中记录 `response.choices[0].message`，我们会看到 GPT 在给出答案之前指示我们使用两个函数。
+
+首先，它告诉我们调用 `getLocation` 函数。然后它告诉我们调用 `getCurrentWeather` 函数，参数为 `"longitude": "10.859", "latitude": "59.955"`。这是我们从第一次函数调用中获得的数据。
+
+```js
+{"role":"assistant","content":null,"tool_calls":[{"id":"call_Cn1KH8mtHQ2AMbyNwNJTweEP","type":"function","function":{"name":"getLocation","arguments":"{}"}}]}
+{"role":"assistant","content":null,"tool_calls":[{"id":"call_uc1oozJfGTvYEfIzzcsfXfOl","type":"function","function":{"name":"getCurrentWeather","arguments":"{\n\"latitude\": \"10.859\",\n\"longitude\": \"59.955\"\n}"}}]}
+```
+
+你现在已经使用 OpenAI 函数和 Node.js SDK 构建了一个 AI 代理！如果你正在寻找额外的挑战，可以考虑增强这个应用。例如，你可以添加一个函数，用于获取用户所在位置的最新活动和事件信息。
+
+祝编程愉快！
+
+<details>
+<summary>完整代码</summary>
+```js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true,
+});
+
+async function getLocation() {
+  const response = await fetch("https://ipapi.co/json/");
+  const locationData = await response.json();
+  return locationData;
+}
+
+async function getCurrentWeather(latitude, longitude) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=apparent_temperature`;
+  const response = await fetch(url);
+  const weatherData = await response.json();
+  return weatherData;
+}
+
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "getCurrentWeather",
+      description: "获取指定位置的当前天气",
+      parameters: {
+        type: "object",
+        properties: {
+          latitude: {
+            type: "string",
+          },
+          longitude: {
+            type: "string",
+          },
+        },
+        required: ["longitude", "latitude"],
+      },
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getLocation",
+      description: "根据用户的IP地址获取用户的位置",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    }
+  },
+];
+
+const availableTools = {
+  getCurrentWeather,
+  getLocation,
+};
+
+const messages = [
+  {
+    role: "system",
+    content: `你是一个有帮助的助手。只使用你被提供的功能。`,
+  },
+];
+
+async function agent(userInput) {
+  messages.push({
+    role: "user",
+    content: userInput,
+  });
+
+  for (let i = 0; i < 5; i++) {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: messages,
+      tools: tools,
+    });
+
+    const { finish_reason, message } = response.choices[0];
+
+    if (finish_reason === "tool_calls" && message.tool_calls) {
+      const functionName = message.tool_calls[0].function.name;
+      const functionToCall = availableTools[functionName];
+      const functionArgs = JSON.parse(message.tool_calls[0].function.arguments);
+      const functionArgsArr = Object.values(functionArgs);
+      const functionResponse = await functionToCall.apply(
+        null,
+        functionArgsArr
+      );
+
+      messages.push({
+        role: "function",
+        name: functionName,
+        content: `
+                上次函数的结果是这样的：${JSON.stringify(
+                  functionResponse
+                )}
+                `,
+      });
+    } else if (finish_reason === "stop") {
+      messages.push(message);
+      return message.content;
+    }
+  }
+  return "已达到最大迭代次数，但没有找到合适的答案。请尝试使用更具体的内容再次提问。";
+}
+
+const response = await agent(
+  "请根据我的位置和天气推荐一些活动。"
+);
+
+console.log("response:", response);
+```
+</details>
